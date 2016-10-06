@@ -3,7 +3,9 @@ Tools for dumping and debugging PHP code
 
 ## Some useful function 
 `d` - dump any object or variables 
-```d($var1, $var2);```
+```
+d($var1, $var2);
+```
 
 `dd` - dump and day any variables
 ```
