@@ -1,12 +1,5 @@
 <?php
 
-/*
-$autostart =  '/home/' . trim(`whoami`) . '/bin/autostart.php';
-if (file_exists($autostart)){
-	include $autostart;
-}
-*/
-
 $_REQUEST['dump'] = 1;
 $_REQUEST['force_cli'] = isset($_REQUEST['force_cli']) ? $_REQUEST['force_cli'] : 0;
 $_REQUEST['force_error_log'] = 0;
@@ -36,7 +29,7 @@ class DumpVariable
 
 		$line = $file[$row['line'] - 1];
 
-        preg_match('/(dd|dm|dump|p)\((.*)\);/', $line, $matches);
+        preg_match('/(dd|dm|dmq|dt|dc|dump|p|dq)\((.*)\);/', $line, $matches);
         $args = preg_replace('/\([^\)]+\)/', '(...)', $matches[2]);
         $names = explode(',', $args);
         $names = array_map('trim', $names);
@@ -69,6 +62,7 @@ class DumpVariable
             new DumpVariableActiveRecordType(),
             new DumpVariableActiveRecordListType(),
             new DumpVariableArrayType(),
+            new DumpVariableClassType(),
             new DumpVariableObjectType(),
             new DumpVariableBooleanType(),
             new DumpVariableStringType(),
@@ -267,6 +261,21 @@ class DumpVariableExceptionType extends DumpVariableObjectType
     }
 }
 
+class DumpVariableClassType extends DumpVariableVariable
+{
+    public function capture(){
+        return is_object($this->variable) && $this->variable instanceof DumpClass;
+    }
+
+    public function getType(){
+        return 'class';
+    }
+
+    public function getContent(){
+        return $this->variable->getClassName();
+    }
+}
+
 
 abstract class DumpVariableAbstractWrapper
 {
@@ -307,15 +316,15 @@ class DumpVariableHtmlWrapper extends DumpVariableAbstractWrapper
 
         $title = sprintf('%s:%d', $row['file'] , $row['line']);
         printf('<div style="color: green">DUMP<br/>%s</div>', $title);
-        echo "<pre>";
+        echo "<table>";
     }
 
-    public function dump(DumpVariableVariable $variable){
-        parent::dump($variable);
+    public function dump(DumpVariableVariable $variable, $name){
+        printf('<tr><td style="color:gray; background-color: #DDD;">%s</td><td>(%s)[%d]</td><td style="border: 1px solid gray;"><pre>%s</pre></td></tr>', htmlspecialchars($name), $variable->getType(), $variable->getLength(), htmlspecialchars($variable->getContent()));
     }
 
     public function end(){
-        echo "</pre>";
+        echo "</table>";
     }
 
     public function backtrace(){
@@ -382,7 +391,6 @@ class DumpVariableColoredCliWrapper extends DumpVariableAbstractWrapper
         $content = $variable->getContent();
         $content = explode("\n", $content);
 
-        #echo "\033[0;33;40m";
         echo iconv('CP1251', 'UTF-8', sprintf("%s", iconv('UTF-8', 'CP1251', $content[0])));
 
         $line_length = mb_strlen($name, 'UTF-8') + strlen($type) + strlen($length) + mb_strlen($content[0], 'UTF-8') + 4 + (is_int($length) ? 3 : 0);
@@ -399,6 +407,24 @@ class DumpVariableColoredCliWrapper extends DumpVariableAbstractWrapper
     }
 }
 
+class DumpClass
+{
+    private $className = '';
+
+    public function __construct($object){
+        if (is_object($object) === false){
+            $this->className = gettype($object);
+        }
+        else {
+            $this->className = get_class($object);
+        }
+    }
+
+    public function getClassName(){
+        return $this->className;
+    }
+}
+
 if (_is_html()){
 	$wrapper = new DumpVariableHtmlWrapper();
 }
@@ -409,6 +435,7 @@ elseif (_is_colored()){
 else {
 	$wrapper = new DumpVariableCliWrapper();
 }
+
 
 
 global $__dump;
@@ -430,6 +457,22 @@ function dd(){
     die;
 }
 
+function dc(){
+    if (empty($_REQUEST['dump'])){
+        return;
+    }
+
+    global $__dump;
+
+	$args = func_get_args();
+    foreach ($args as & $object){
+        $object = new DumpClass($object);
+    }
+    //call_user_func_array('dump', $args);
+    call_user_func_array(array($__dump, 'dump'), $args);
+    die;
+}
+
 function dq(CActiveRecord $model){
     $sql = Yii::app()->db->getCommandBuilder()->createFindCommand($model->tableName(), $model->getDbCriteria())->getText();
 
@@ -438,6 +481,15 @@ function dq(CActiveRecord $model){
     $sql = str_replace(array_keys($params), array_values($params), $sql);
     call_user_func_array('dump', array($sql));
     die;
+}
+
+function dmq(CActiveRecord $model){
+    $sql = Yii::app()->db->getCommandBuilder()->createFindCommand($model->tableName(), $model->getDbCriteria())->getText();
+
+    $params = $model->getDbCriteria()->params;
+
+    $sql = str_replace(array_keys($params), array_values($params), $sql);
+    dm($sql);
 }
 
 function dump_logs($count = 1){
@@ -468,6 +520,11 @@ function dump()
 {
     global $__dump;
     call_user_func_array(array($__dump, 'dump'), func_get_args());
+}
+
+function dt(){
+    global $__dump;
+    $__dump->backtrace();
 }
 
 function dfl(){
@@ -548,11 +605,11 @@ function _is_html(){
         return false;
     }
 
-    if (empty($_REQUEST['force_cli']) === false){
-        return true;
+    if (empty($_REQUEST['force_cli']) === false && $_REQUEST['force_cli'] == 1){
+        return false;
     }
 
-    return false;
+    return true;
 }
 
 function _is_colored(){
@@ -668,7 +725,7 @@ function dm(){
     $content = ob_get_clean();
 
     if (isset($_SERVER['HTTP_HOST'])){
-        $link = ($_SERVER['HTTPS'] ? 'http://' : 'https://' ) .$_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+        $link = (!empty($_SERVER['HTTPS']) ? 'http://' : 'https://' ) .$_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
         $link = sprintf('<p style="color: blue; font-size: small;">%s</p>', $link);
         $content = $link . $content;
     }
